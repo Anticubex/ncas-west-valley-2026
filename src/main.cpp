@@ -24,7 +24,7 @@ void on_center_button() {
  */
 void initialize() {
 	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Hello PROS User.");
+	pros::lcd::set_text(1, "Hello World");
 
 	pros::lcd::register_btn1_cb(on_center_button);
 }
@@ -75,9 +75,9 @@ void autonomous() {}
  */
 
 #define LEFT_FRONT_PORT 1
-#define LEFT_BACK_PORT  11
+// #define LEFT_BACK_PORT  11
 #define RIGHT_FRONT_PORT 11
-#define RIGHT_BACK_PORT  20
+// #define RIGHT_BACK_PORT  20
 
 void opcontrol() {
     // Using MotorGroups makes it easy to control multiple motors as one side
