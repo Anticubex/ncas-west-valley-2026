@@ -6,6 +6,7 @@
 #include "pros/motors.h"
 #include "pros/screen.h"
 #include "pros/screen.hpp"
+#include <cmath>
 
 /**
  * A callback function for LLEMU's center button.
@@ -136,14 +137,15 @@ void opcontrol() {
         float r_vel = right_motor.get_actual_velocity() * 360 / 60;
         // This assumes the rotation is in the z-axis. Change this if you
         // reorient the IMU!
-        float imu_heading = imu.get_rotation();
+        // THIS IS IN RADIANS
+        float imu_heading = imu.get_rotation() * (M_PI / 180.f);
 
         Vel curr_vel = Vel::from_encoders(tuning_vals, l_vel, r_vel);
         position.apply_with_imu(curr_vel, imu_heading, dt);
 
         pros::screen::print(pros::E_TEXT_MEDIUM, 1,
                             "x: %.2f | y: %.2f | head: %2.f", position.x,
-                            position.y, position.heading);
+                            position.y, position.heading * (180.f / M_PI));
 
         if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
             valTuning += 1;
