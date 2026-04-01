@@ -30,10 +30,10 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-    pros::lcd::initialize();
-    pros::lcd::set_text(1, "Tuning Opmode");
-
-    pros::lcd::register_btn1_cb(on_center_button);
+    // pros::lcd::initialize();
+    // pros::lcd::set_text(1, "Tuning Opmode");
+    //
+    // pros::lcd::register_btn1_cb(on_center_button);
 }
 
 /**
@@ -104,6 +104,16 @@ void opcontrol() {
     pros::Motor right_motor(RIGHT_PORT, pros::MotorGears::green);
     pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
+    bool is_running_pid = false;
+    float target_x = 0, target_y = 0, target_head = 0;
+    bool mode_linear = true; // true for linear, false for angular
+
+    // PID Gains - TUNING STARTS HERE
+    // Start with just kP, keep kI and kD at 0 until kP is stable
+    PID linPID(4.0f, 0.0f, 0.1f);
+    PID angPID(2.0f, 0.0f, 0.05f);
+    int valTuning = 0;
+
     imu.reset();
     while (imu.is_calibrating())
         pros::delay(10); // Arch/PROS safety: wait for IMU
@@ -117,7 +127,8 @@ void opcontrol() {
 
     while (true) {
         now = pros::millis();
-        float dt = now - last;
+        // dt is in millis
+        float dt = (now - last) * 0.001;
         last = now;
 
         // Convert RPM to deg/sec
@@ -134,17 +145,132 @@ void opcontrol() {
                             "x: %.2f | y: %.2f | head: %2.f", position.x,
                             position.y, position.heading);
 
-        // Tank drive for testing
-        float throttle =
-            (float)(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y)) /
-            127.f;
-        float rotation =
-            (float)(controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X)) /
-            127.f;
-        float final_left = throttle - rotation;
-        float final_right = throttle + rotation;
-        left_motor.move((std::int32_t)(final_left * 127.f));
-        right_motor.move((std::int32_t)(final_right * 127.f));
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
+            valTuning += 1;
+            valTuning %= 6;
+        }
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+            valTuning -= 1;
+            valTuning %= 6;
+        }
+        float change = 0.f;
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_LEFT)) {
+            change -= 0.1f;
+        }
+        if (controller.get_digital_new_press(
+                pros::E_CONTROLLER_DIGITAL_RIGHT)) {
+            change += 0.1f;
+        }
+
+        std::string name;
+        float val;
+        switch (valTuning) {
+        case 0:
+            name = "lin_kp";
+            linPID.kp += change;
+            val = linPID.kp;
+            break;
+        case 1:
+            name = "lin_ki";
+            linPID.ki += change;
+            val = linPID.ki;
+            break;
+        case 2:
+            name = "lin_kd";
+            linPID.kd += change;
+            val = linPID.kd;
+            break;
+        case 3:
+            name = "ang_kp";
+            angPID.kp += change;
+            val = angPID.kp;
+            break;
+        case 4:
+            name = "ang_ki";
+            angPID.ki += change;
+            val = angPID.ki;
+            break;
+        case 5:
+            name = "ang_kd";
+            angPID.kd += change;
+            val = angPID.kd;
+            break;
+        }
+        pros::screen::print(pros::E_TEXT_MEDIUM, 2, "val: %s = %2.f ", name,
+                            val);
+        pros::screen::print(
+            pros::E_TEXT_MEDIUM, 3,
+            "lin: kp %.2f | ki %2.f | kd %2.f, target = %2.f, err = %2.f",
+            linPID.kp, linPID.ki, linPID.kd, target_x, linPID.error);
+        pros::screen::print(
+            pros::E_TEXT_MEDIUM, 4,
+            "ang: kp %.2f | ki %2.f | kd %2.f, target = %2.f, err = %2.f",
+            angPID.kp, angPID.ki, angPID.kd, target_head, angPID.error);
+
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) {
+            is_running_pid = true;
+            mode_linear = true;
+            // target_x = position.x + 1.0f; // Target 1 meter forward
+            target_x = 1.0f;
+            target_y = position.y;
+            linPID.reset();
+        }
+
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) {
+            if (target_x == 1.0f)
+                target_x = 0.0f;
+            else
+                target_x = 1.0f;
+        }
+
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
+            is_running_pid = true;
+            mode_linear = false;
+            target_head =
+                position.heading + (M_PI / 2.0f); // Target +90 degrees
+            angPID.reset();
+        }
+
+        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B))
+            is_running_pid = false;
+
+        if (is_running_pid) {
+            float l_out = 0, r_out = 0;
+
+            if (mode_linear) {
+                // Linear Tuning: Move to X target while maintaining heading
+                float dist_error = target_x - position.x;
+                float head_error = 0 - position.heading; // Keep facing forward
+
+                float drive = linPID.calculate(target_x, position.x, dt);
+                float steer = angPID.calculate(0, position.heading, dt);
+
+                l_out = drive - steer;
+                r_out = drive + steer;
+            } else {
+                // Angular Tuning: Spin in place
+                float steer = angPID.calculate(target_head, position.heading,
+                                               dt / 1000.f);
+                l_out = -steer;
+                r_out = steer;
+            }
+
+            // Apply motor voltages (clamped to +/- 127)
+            left_motor.move(-std::clamp((int)(l_out * 127.f), -127, 127));
+            right_motor.move(std::clamp((int)(r_out * 127.f), -127, 127));
+        } else {
+            // Tank drive for testing
+            float throttle = (float)(controller.get_analog(
+                                 pros::E_CONTROLLER_ANALOG_LEFT_Y)) /
+                             127.f;
+            float rotation = -(float)(controller.get_analog(
+                                 pros::E_CONTROLLER_ANALOG_RIGHT_X)) /
+                             127.f;
+            float final_left = throttle - rotation;
+            float final_right = throttle + rotation;
+            left_motor.move(-(std::int32_t)(final_left * 127.f));
+            right_motor.move((std::int32_t)(final_right * 127.f));
+        }
 
         pros::delay(50);
     }
