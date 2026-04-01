@@ -1,4 +1,7 @@
 #include "main.h"
+#include "pos.hpp"
+#include "pros/abstract_motor.hpp"
+#include "pros/motors.h"
 
 /**
  * A callback function for LLEMU's center button.
@@ -7,13 +10,13 @@
  * "I was pressed!" and nothing.
  */
 void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
+  // static bool pressed = false;
+  // pressed = !pressed;
+  // if (pressed) {
+  // 	pros::lcd::set_text(2, "I was pressed!");
+  // } else {
+  // 	pros::lcd::clear_line(2);
+  // }
 }
 
 /**
@@ -23,10 +26,10 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Hello World");
+  pros::lcd::initialize();
+  pros::lcd::set_text(1, "Tuning Opmode");
 
-	pros::lcd::register_btn1_cb(on_center_button);
+  pros::lcd::register_btn1_cb(on_center_button);
 }
 
 /**
@@ -58,6 +61,7 @@ void competition_initialize() {}
  * will be stopped. Re-enabling the robot will restart the task, not re-start it
  * from where it left off.
  */
+
 void autonomous() {}
 
 /**
@@ -74,30 +78,54 @@ void autonomous() {}
  * task, not resume it from where it left off.
  */
 
-#define LEFT_FRONT_PORT 1
-// #define LEFT_BACK_PORT  11
-#define RIGHT_FRONT_PORT 11
-// #define RIGHT_BACK_PORT  20
+const std::uint8_t LEFT_PORT = 1;
+const std::uint8_t RIGHT_PORT = 1;
 
 void opcontrol() {
-    // Using MotorGroups makes it easy to control multiple motors as one side
-    pros::MotorGroup left_side({LEFT_FRONT_PORT, /*LEFT_BACK_PORT*/});
-    pros::MotorGroup right_side({-RIGHT_FRONT_PORT, /*-RIGHT_BACK_PORT*/}); // Note the '-' to reverse
+  // 1. Hardware Setup
+  pros::IMU imu(5); // Port 5
+  pros::Motor left_motor(LEFT_PORT, pros::MotorGears::green);
+  pros::Motor right_motor(10, pros::MotorGears::green);
 
-    pros::Controller master(pros::E_CONTROLLER_MASTER);
+  imu.reset();
+  while (imu.is_calibrating())
+    pros::delay(10); // Arch/PROS safety: wait for IMU
 
-    while (true) {
-        // 3. Get Joystick Values
-        // Analog Y-axis for both sticks (Tank Drive)
-        int left_y = master.get_analog(ANALOG_LEFT_Y);
-        int right_y = master.get_analog(ANALOG_RIGHT_Y);
+  // Initial placeholder values - we are here to find these!
+  BotValues tuning_vals(1.0f, 1.0f, 12.5f);
 
-        // 4. Move Motors
-        // .move() takes a voltage value from -127 to 127
-        left_side.move(left_y);
-        right_side.move(right_y);
+  std::cout << "--- IMU & ENCODER TUNER ---" << std::endl;
+  std::cout << "Press X to Reset. Rotate 10 times." << std::endl;
 
-        // 5. Don't hog the CPU!
-        pros::delay(20); 
+  while (true) {
+    float l_deg = left_motor.get_position();
+    float r_deg = right_motor.get_position();
+    float imu_deg =
+        -imu.get_rotation(); // PROS IMU is clockwise positive by default
+
+    // Calculate "Encoder Heading" based on current trackWidth guess
+    // (RightDist - LeftDist) / trackWidth = Radians
+    float l_dist = l_deg * tuning_vals.leftRatio;
+    float r_dist = r_deg * tuning_vals.rightRatio;
+    float enc_rad = (r_dist - l_dist) / tuning_vals.trackWidth;
+    float enc_deg = enc_rad * (180.0f / M_PI);
+
+    // Print Comparison to Terminal
+    // If Enc Deg > IMU Deg, your trackWidth is too SMALL.
+    // If Enc Deg < IMU Deg, your trackWidth is too LARGE.
+    printf("IMU: %.2f | ENC: %.2f | DIFF: %.2f\n", imu_deg, enc_deg,
+           imu_deg - enc_deg);
+
+    // Screen Output
+    pros::screen::print(pros::E_TEXT_MEDIUM, 1, "IMU Deg: %.2f", imu_deg);
+    pros::screen::print(pros::E_TEXT_MEDIUM, 2, "ENC Deg: %.2f", enc_deg);
+
+    if (pros::Controller(pros::E_CONTROLLER_MASTER).get_digital(DIGITAL_X)) {
+      left_motor.tare_position();
+      right_motor.tare_position();
+      imu.reset();
     }
+
+    pros::delay(50);
+  }
 }

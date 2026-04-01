@@ -1,14 +1,18 @@
 CompileFlags:
   Add: 
     - "-isystem"
-    - "/usr/arm-none-eabi/include"
-    - "-isystem"
     - "/usr/arm-none-eabi/include/c++/14.2.0"
     - "-isystem"
     - "/usr/arm-none-eabi/include/c++/14.2.0/arm-none-eabi"
+    - "-isystem"
+    - "/usr/arm-none-eabi/include"
     - "-I./include"
-    # This helps clangd find the internal headers like <stddef.h>
-    - "-query-driver=/usr/bin/arm-none-eabi-*" 
-  Remove: [-mthumb, -mabi=aapcs, -mfloat-abi=*, -mcpu=*]
+  Remove: 
+    - "-mthumb"
+    - "-mabi=*"
+    - "-mfloat-abi=*"
+    - "-mcpu=*"
+    - "-mfpu=*"
+    - "--specs=*" # THIS IS CRITICAL: Clang hates GCC specs files
 Index:
   Background: true
