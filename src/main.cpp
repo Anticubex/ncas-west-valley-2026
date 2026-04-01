@@ -1,7 +1,11 @@
 #include "main.h"
 #include "pos.hpp"
 #include "pros/abstract_motor.hpp"
+#include "pros/misc.h"
+#include "pros/misc.hpp"
 #include "pros/motors.h"
+#include "pros/screen.h"
+#include "pros/screen.hpp"
 
 /**
  * A callback function for LLEMU's center button.
@@ -10,13 +14,13 @@
  * "I was pressed!" and nothing.
  */
 void on_center_button() {
-  // static bool pressed = false;
-  // pressed = !pressed;
-  // if (pressed) {
-  // 	pros::lcd::set_text(2, "I was pressed!");
-  // } else {
-  // 	pros::lcd::clear_line(2);
-  // }
+    // static bool pressed = false;
+    // pressed = !pressed;
+    // if (pressed) {
+    // 	pros::lcd::set_text(2, "I was pressed!");
+    // } else {
+    // 	pros::lcd::clear_line(2);
+    // }
 }
 
 /**
@@ -26,10 +30,10 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-  pros::lcd::initialize();
-  pros::lcd::set_text(1, "Tuning Opmode");
+    pros::lcd::initialize();
+    pros::lcd::set_text(1, "Tuning Opmode");
 
-  pros::lcd::register_btn1_cb(on_center_button);
+    pros::lcd::register_btn1_cb(on_center_button);
 }
 
 /**
@@ -78,54 +82,70 @@ void autonomous() {}
  * task, not resume it from where it left off.
  */
 
-const std::uint8_t LEFT_PORT = 1;
-const std::uint8_t RIGHT_PORT = 1;
+/* Experimentally tuned BotValues:
+ * Distance unit = tiles
+ * leftRatio: -0.00043777
+ * rightRatio: 0.00043170
+ * trackwidth: 0.43322
+ * */
+
+const float leftRatio = -0.00043777;
+const float rightRatio = 0.00043170;
+const float trackWidth = 0.43322;
+
+const std::uint8_t LEFT_PORT = 20;
+const std::uint8_t RIGHT_PORT = 10;
+const std::uint8_t IMU_PORT = 5;
 
 void opcontrol() {
-  // 1. Hardware Setup
-  pros::IMU imu(5); // Port 5
-  pros::Motor left_motor(LEFT_PORT, pros::MotorGears::green);
-  pros::Motor right_motor(10, pros::MotorGears::green);
+    // Hardware Setup
+    pros::IMU imu(IMU_PORT); // Port 5
+    pros::Motor left_motor(LEFT_PORT, pros::MotorGears::green);
+    pros::Motor right_motor(RIGHT_PORT, pros::MotorGears::green);
+    pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
-  imu.reset();
-  while (imu.is_calibrating())
-    pros::delay(10); // Arch/PROS safety: wait for IMU
+    imu.reset();
+    while (imu.is_calibrating())
+        pros::delay(10); // Arch/PROS safety: wait for IMU
 
-  // Initial placeholder values - we are here to find these!
-  BotValues tuning_vals(1.0f, 1.0f, 12.5f);
+    // Initial placeholder values - we are here to find these!
+    BotValues tuning_vals(rightRatio, leftRatio, trackWidth);
+    Pos position = Pos(0.f, 0.f, 0.f);
 
-  std::cout << "--- IMU & ENCODER TUNER ---" << std::endl;
-  std::cout << "Press X to Reset. Rotate 10 times." << std::endl;
+    float now, last;
+    last = pros::millis();
 
-  while (true) {
-    float l_deg = left_motor.get_position();
-    float r_deg = right_motor.get_position();
-    float imu_deg =
-        -imu.get_rotation(); // PROS IMU is clockwise positive by default
+    while (true) {
+        now = pros::millis();
+        float dt = now - last;
+        last = now;
 
-    // Calculate "Encoder Heading" based on current trackWidth guess
-    // (RightDist - LeftDist) / trackWidth = Radians
-    float l_dist = l_deg * tuning_vals.leftRatio;
-    float r_dist = r_deg * tuning_vals.rightRatio;
-    float enc_rad = (r_dist - l_dist) / tuning_vals.trackWidth;
-    float enc_deg = enc_rad * (180.0f / M_PI);
+        // Convert RPM to deg/sec
+        float l_vel = left_motor.get_actual_velocity() * 360 / 60;
+        float r_vel = right_motor.get_actual_velocity() * 360 / 60;
+        // This assumes the rotation is in the z-axis. Change this if you
+        // reorient the IMU!
+        float imu_heading = imu.get_rotation();
 
-    // Print Comparison to Terminal
-    // If Enc Deg > IMU Deg, your trackWidth is too SMALL.
-    // If Enc Deg < IMU Deg, your trackWidth is too LARGE.
-    printf("IMU: %.2f | ENC: %.2f | DIFF: %.2f\n", imu_deg, enc_deg,
-           imu_deg - enc_deg);
+        Vel curr_vel = Vel::from_encoders(tuning_vals, l_vel, r_vel);
+        position.apply_with_imu(curr_vel, imu_heading, dt);
 
-    // Screen Output
-    pros::screen::print(pros::E_TEXT_MEDIUM, 1, "IMU Deg: %.2f", imu_deg);
-    pros::screen::print(pros::E_TEXT_MEDIUM, 2, "ENC Deg: %.2f", enc_deg);
+        pros::screen::print(pros::E_TEXT_MEDIUM, 1,
+                            "x: %.2f | y: %.2f | head: %2.f", position.x,
+                            position.y, position.heading);
 
-    if (pros::Controller(pros::E_CONTROLLER_MASTER).get_digital(DIGITAL_X)) {
-      left_motor.tare_position();
-      right_motor.tare_position();
-      imu.reset();
+        // Tank drive for testing
+        float throttle =
+            (float)(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y)) /
+            127.f;
+        float rotation =
+            (float)(controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X)) /
+            127.f;
+        float final_left = throttle - rotation;
+        float final_right = throttle + rotation;
+        left_motor.move((std::int32_t)(final_left * 127.f));
+        right_motor.move((std::int32_t)(final_right * 127.f));
+
+        pros::delay(50);
     }
-
-    pros::delay(50);
-  }
 }
