@@ -279,11 +279,12 @@ void opcontrol() {
 
             // --- PATH EXECUTION ---
             // auto current_path = going_forward ? forward_path : reverse_path;
-            auto current_path = circle;
-            follower.loop = true;
+            auto current_path = final_path;
+            // follower.loop = true;
             auto out = follower.update(position, current_path, dt);
 
             if (out.done) {
+                return;
                 // We arrived! Swap directions and reset PID for the next trip
                 going_forward = !going_forward;
                 distancePID.reset();
@@ -297,10 +298,10 @@ void opcontrol() {
             }
 
             // --- TELEMETRY ---
-            pros::screen::print(pros::E_TEXT_LARGE, 1, "> %s <",
-                                names[selected_idx]);
-            pros::screen::print(pros::E_TEXT_LARGE, 3, "Val: %.3f",
-                                *params[selected_idx]);
+            // pros::screen::print(pros::E_TEXT_LARGE, 1, "> %s <",
+            //                     names[selected_idx]);
+            // pros::screen::print(pros::E_TEXT_LARGE, 3, "Val: %.3f",
+            //                     *params[selected_idx]);
 
             // Print to terminal so you don't have to stare at the brain
             printf("Tuning [%s]: %.3f | X: %.2f | Y: %.2f | H: %.2f\n",
@@ -308,11 +309,12 @@ void opcontrol() {
                    position.y, position.heading * (180.f / M_PI));
 
         } else {
-            pros::screen::print(pros::E_TEXT_LARGE, 2, "MANUAL DRIVE       ");
-            pros::screen::print(pros::E_TEXT_MEDIUM, 3, "Press A to Tune    ");
-            pros::screen::print(pros::E_TEXT_MEDIUM, 4,
-                                "x: %.2f | y: %.2f | head: %.2f", position.x,
-                                position.y, position.heading * (180.f / M_PI));
+            // pros::screen::print(pros::E_TEXT_LARGE, 2, "MANUAL DRIVE ");
+            // pros::screen::print(pros::E_TEXT_MEDIUM, 3, "Press A to Tune ");
+            // pros::screen::print(pros::E_TEXT_MEDIUM, 4,
+            //                     "x: %.2f | y: %.2f | head: %.2f", position.x,
+            //                     position.y, position.heading * (180.f /
+            //                     M_PI));
             do_tank_drive(left_motor, right_motor, controller);
         }
 
@@ -320,6 +322,11 @@ void opcontrol() {
         printf("%.2f | %.2f | %.2f \n", optical_sensor.get_hue(),
                optical_sensor.get_saturation(),
                optical_sensor.get_brightness());
-        pros::delay(20);
+        pros::screen::print(pros::E_TEXT_LARGE, 2, "%.2f | %.2f | %.2f \n",
+                            optical_sensor.get_hue(),
+                            optical_sensor.get_saturation(),
+                            optical_sensor.get_brightness());
+
+        pros::delay(10);
     }
 }
