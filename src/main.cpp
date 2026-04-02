@@ -116,186 +116,164 @@ void do_tank_drive(pros::Motor &left_motor, pros::Motor &right_motor,
     left_motor.move(-(std::int32_t)(final_left * 127.f));
     right_motor.move((std::int32_t)(final_right * 127.f));
 }
+
+void update_position(pros::IMU &imu, pros::Motor &left_motor,
+                     pros::Motor &right_motor, BotValues &tuning_vals,
+                     Pos &position, float &last_l_deg, float &last_r_deg,
+                     float &dt) {
+    float curr_l_deg = left_motor.get_position();
+    float curr_r_deg = right_motor.get_position();
+    // 2. Calculate DELTA degrees (This is much more accurate than Velocity)
+    float d_left_deg = curr_l_deg - last_l_deg;
+    float d_right_deg = curr_r_deg - last_r_deg;
+    // Update the "last" values for the next iteration
+    last_l_deg = curr_l_deg;
+    last_r_deg = curr_r_deg;
+
+    // 3. Convert Delta Degrees to Velocity (Units: Tiles per Second)
+    // Since Vel::from_encoders expects deg/sec:
+    float l_vel = d_left_deg / dt;
+    float r_vel = d_right_deg / dt;
+
+    // This assumes the rotation is in the z-axis. Change this if you
+    // reorient the IMU!
+    // THIS IS IN RADIANS
+    float imu_heading = imu.get_rotation() * (M_PI / 180.f);
+
+    Vel curr_vel = Vel::from_encoders(tuning_vals, l_vel, r_vel);
+    position.apply_with_imu(curr_vel, imu_heading, dt);
+}
+
 void opcontrol() {
     // Hardware Setup
     pros::IMU imu(IMU_PORT);
     pros::Motor left_motor(LEFT_PORT, pros::MotorGears::green);
     pros::Motor right_motor(RIGHT_PORT, pros::MotorGears::green);
+
+    left_motor.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+    right_motor.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+
     pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
-    bool is_running_pid = false;
-    float target_x = 0, target_y = 0, target_head = 0;
-    bool mode_linear = true; // true for linear, false for angular
+    BotValues tuning_vals(rightRatio, leftRatio, trackWidth);
 
-    // PID Gains - TUNING STARTS HERE
-    // Start with just kP, keep kI and kD at 0 until kP is stable
-    PID linPID(0.4f, 0.0f, 0.1f);
-    PID angPID(0.04f, 0.0f, 0.05f);
-    int valTuning = 0;
+    // Position Tracking variables (Assumes you have the delta-position loop set
+    // up)
+    Pos position(0.f, 0.f, 0.f);
+
+    // --- PATH FOLLOWER SETUP ---
+    // Start with a small P, 0 I, and some D to prevent overshoot.
+    static PID distancePID(50.00f, 1.0f, -1.0f);
+    static PathFollower follower(trackWidth, distancePID);
+
+    // Ping-Pong Paths
+    std::vector<PathPoint> forward_path = {
+        {1.5f, 0.0f, false}}; // 1.5 tiles forward
+    std::vector<PathPoint> reverse_path = {
+        {0.0f, 0.0f, true}}; // 0 tiles (return to start), reverse
+
+    std::vector<PathPoint> circle = {{1.f, 0.f, false},
+                                     {1.f, 1.f, false},
+                                     {0.f, 1.f, false},
+                                     {0.f, 0.f, false}};
+
+    bool going_forward = true;
+    bool is_tuning_mode = false;
+
+    // --- LIVE TUNING UI SETUP ---
+    int selected_idx = 0;
+    const int NUM_PARAMS = 4;
+    float *params[NUM_PARAMS] = {&distancePID.kp, &distancePID.kd,
+                                 &distancePID.ki, &follower.lookaheadDist};
+    const char *names[NUM_PARAMS] = {"Dist kP", "Dist kD", "Dist kI",
+                                     "Lookahead"};
+    float steps[NUM_PARAMS] = {5.0f, 1.0f, 0.1f, 0.05f};
 
     imu.reset();
     while (imu.is_calibrating())
-        pros::delay(10); // Arch/PROS safety: wait for IMU
+        pros::delay(10); // PROS safety: wait for IMU
 
-    // Initial placeholder values - we are here to find these!
-    BotValues tuning_vals(rightRatio, leftRatio, trackWidth);
-    Pos position = Pos(0.f, 0.f, 0.f);
+    printf("Done Calibrating\n");
 
     // Store the encoder values from the PREVIOUS loop
     float last_l_deg = left_motor.get_position();
     float last_r_deg = right_motor.get_position();
-
-    float now, last;
-    last = pros::millis();
+    float last = pros::millis();
 
     while (true) {
-        now = pros::millis();
-        // dt is in seconds
-        float dt = (now - last) * 0.001;
+        float now = pros::millis();
+        float dt = (now - last) * 0.001f;
+        // Avoid dividing by zero on the very first loop
+        if (dt <= 0.0f) {
+            pros::delay(10);
+            continue;
+        }
         last = now;
 
-        // Do NOT use Motor::get_velocity()
-        float curr_l_deg = left_motor.get_position();
-        float curr_r_deg = right_motor.get_position();
-        // 2. Calculate DELTA degrees (This is much more accurate than Velocity)
-        float d_left_deg = curr_l_deg - last_l_deg;
-        float d_right_deg = curr_r_deg - last_r_deg;
-        // Update the "last" values for the next iteration
-        last_l_deg = curr_l_deg;
-        last_r_deg = curr_r_deg;
+        update_position(imu, left_motor, right_motor, tuning_vals, position,
+                        last_l_deg, last_r_deg, dt);
 
-        // 3. Convert Delta Degrees to Velocity (Units: Tiles per Second)
-        // Since Vel::from_encoders expects deg/sec:
-        float l_vel = d_left_deg / dt;
-        float r_vel = d_right_deg / dt;
-
-        // This assumes the rotation is in the z-axis. Change this if you
-        // reorient the IMU!
-        // THIS IS IN RADIANS
-        float imu_heading = imu.get_rotation() * (M_PI / 180.f);
-
-        Vel curr_vel = Vel::from_encoders(tuning_vals, l_vel, r_vel);
-        position.apply_with_imu(curr_vel, imu_heading, dt);
-
-        pros::screen::print(pros::E_TEXT_MEDIUM, 1,
-                            "x: %.2f | y: %.2f | head: %.2f", position.x,
-                            position.y, position.heading * (180.f / M_PI));
-
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
-            valTuning += 1;
-            valTuning %= 6;
-        }
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-            valTuning -= 1;
-            valTuning %= 6;
-        }
-        float change = 0.f;
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_LEFT)) {
-            change -= 0.1f;
-        }
-        if (controller.get_digital_new_press(
-                pros::E_CONTROLLER_DIGITAL_RIGHT)) {
-            change += 0.1f;
-        }
-
-        std::string name;
-        float val;
-        switch (valTuning) {
-        case 0:
-            name = "lin_kp";
-            linPID.kp += change;
-            val = linPID.kp;
-            break;
-        case 1:
-            name = "lin_ki";
-            linPID.ki += change;
-            val = linPID.ki;
-            break;
-        case 2:
-            name = "lin_kd";
-            linPID.kd += change;
-            val = linPID.kd;
-            break;
-        case 3:
-            name = "ang_kp";
-            angPID.kp += change;
-            val = angPID.kp;
-            break;
-        case 4:
-            name = "ang_ki";
-            angPID.ki += change;
-            val = angPID.ki;
-            break;
-        case 5:
-            name = "ang_kd";
-            angPID.kd += change;
-            val = angPID.kd;
-            break;
-        }
-        pros::screen::print(pros::E_TEXT_MEDIUM, 2, "val: %s = %2.f ", name,
-                            val);
-        pros::screen::print(
-            pros::E_TEXT_MEDIUM, 3,
-            "lin: kp %.2f | ki %2.f | kd %2.f, target = %2.f, err = %2.f",
-            linPID.kp, linPID.ki, linPID.kd, target_x, linPID.error);
-        pros::screen::print(
-            pros::E_TEXT_MEDIUM, 4,
-            "ang: kp %.2f | ki %2.f | kd %2.f, target = %2.f, err = %2.f",
-            angPID.kp, angPID.ki, angPID.kd, target_head, angPID.error);
-
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) {
-            is_running_pid = true;
-            mode_linear = true;
-            // target_x = position.x + 1.0f; // Target 1 meter forward
-            target_x = 1.0f;
-            target_y = position.y;
-            linPID.reset();
-        }
-
+        // Toggle Tuning Mode with 'A'
         if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) {
-            if (target_x == 1.0f)
-                target_x = 0.0f;
-            else
-                target_x = 1.0f;
+            is_tuning_mode = !is_tuning_mode;
+            distancePID.reset();
+            left_motor.move(0);
+            right_motor.move(0);
         }
 
-        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
-            is_running_pid = true;
-            mode_linear = false;
-            target_head =
-                position.heading + (M_PI / 2.0f); // Target +90 degrees
-            angPID.reset();
-        }
-
-        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_B))
-            is_running_pid = false;
-
-        if (is_running_pid) {
-            float l_out = 0, r_out = 0;
-
-            if (mode_linear) {
-                // Linear Tuning: Move to X target while maintaining heading
-                float dist_error = target_x - position.x;
-                float head_error = 0 - position.heading; // Keep facing forward
-
-                float drive = linPID.calculate(target_x, position.x, dt);
-                float steer = angPID.calculate(0, position.heading, dt);
-
-                l_out = drive - steer;
-                r_out = drive + steer;
-            } else {
-                // Angular Tuning: Spin in place
-                float steer = angPID.calculate(target_head, position.heading,
-                                               dt / 1000.f);
-                l_out = -steer;
-                r_out = steer;
+        if (is_tuning_mode) {
+            // --- UI LOGIC ---
+            if (controller.get_digital_new_press(
+                    pros::E_CONTROLLER_DIGITAL_RIGHT))
+                selected_idx = (selected_idx + 1) % NUM_PARAMS;
+            if (controller.get_digital_new_press(
+                    pros::E_CONTROLLER_DIGITAL_LEFT))
+                selected_idx = (selected_idx - 1 + NUM_PARAMS) % NUM_PARAMS;
+            if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP))
+                *params[selected_idx] += steps[selected_idx];
+            if (controller.get_digital_new_press(
+                    pros::E_CONTROLLER_DIGITAL_DOWN)) {
+                *params[selected_idx] -= steps[selected_idx];
+                if (*params[selected_idx] < 0)
+                    *params[selected_idx] = 0; // Prevent negatives
             }
 
-            // Apply motor voltages (clamped to +/- 127)
-            left_motor.move(-std::clamp((int)(l_out * 127.f), -127, 127));
-            right_motor.move(std::clamp((int)(r_out * 127.f), -127, 127));
+            // --- PATH EXECUTION ---
+            // auto current_path = going_forward ? forward_path : reverse_path;
+            auto current_path = circle;
+            follower.loop = true;
+            auto out = follower.update(position, current_path, dt);
+
+            if (out.done) {
+                // We arrived! Swap directions and reset PID for the next trip
+                going_forward = !going_forward;
+                distancePID.reset();
+                left_motor.move(0);
+                right_motor.move(0);
+                pros::delay(500); // Wait half a second before shooting back
+            } else {
+                // Apply clamped output to motors
+                left_motor.move(std::clamp((int)out.left, -127, 127));
+                right_motor.move(std::clamp((int)out.right, -127, 127));
+            }
+
+            // --- TELEMETRY ---
+            pros::screen::print(pros::E_TEXT_LARGE, 1, "> %s <",
+                                names[selected_idx]);
+            pros::screen::print(pros::E_TEXT_LARGE, 3, "Val: %.3f",
+                                *params[selected_idx]);
+
+            // Print to terminal so you don't have to stare at the brain
+            printf("Tuning [%s]: %.3f | X: %.2f | Y: %.2f | H: %.2f\n",
+                   names[selected_idx], *params[selected_idx], position.x,
+                   position.y, position.heading);
+
         } else {
-            // Tank drive for testing
+            pros::screen::print(pros::E_TEXT_LARGE, 2, "MANUAL DRIVE       ");
+            pros::screen::print(pros::E_TEXT_MEDIUM, 3, "Press A to Tune    ");
+            pros::screen::print(pros::E_TEXT_MEDIUM, 4,
+                                "x: %.2f | y: %.2f | head: %.2f", position.x,
+                                position.y, position.heading * (180.f / M_PI));
             do_tank_drive(left_motor, right_motor, controller);
         }
 

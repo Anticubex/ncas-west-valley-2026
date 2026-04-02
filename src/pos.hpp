@@ -90,61 +90,92 @@ class PID {
     void reset() { error = lastError = integral = derivative = 0; }
 };
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 struct PathPoint {
-    float x, y, heading;
-    bool reverse; // If true, the robot drives butt-first to this point
+    float x, y;
+    bool reverse; // Drive backward to this point?
 };
+#include "main.h"
 class PathFollower {
-  private:
-    float lookaheadDist = 0.4f; // How far ahead to look (meters)
-    float trackWidth;
-    PID &velPID; // Now we use PID to control actual velocity, not just voltage
-
   public:
-    PathFollower(float tw, PID &v) : trackWidth(tw), velPID(v) {}
+    float lookaheadDist = 0.4f; // TUNABLE: How far ahead the robot looks
+    float trackWidth;
+    size_t current_point;
+    bool loop;
+    PID &distPID; // TUNABLE: Controls speed based on distance to final target
 
-    struct DriveVel {
+    PathFollower(float tw, PID &dPid)
+        : trackWidth(tw), distPID(dPid), current_point(0), loop(false) {}
+
+    struct Output {
         float left, right;
+        bool done;
     };
 
-    DriveVel update(const Pos &current, const PathPoint &target, float maxVel) {
-        // 1. Transform target to Robot-Local Coordinates
+    Output update(const Pos &current, const std::vector<PathPoint> &path,
+                  float dt) {
+
+        if (current_point >= path.size()) {
+            if (loop && !path.empty()) {
+                current_point = 0;
+            } else {
+                printf("Done with path\n");
+                return {0, 0, true};
+            }
+        }
+        PathPoint target = path[current_point];
+        printf("Pathing to [%u] %.2f, %.2f\t", current_point, target.x,
+               target.y);
+
         float dx = target.x - current.x;
         float dy = target.y - current.y;
+        float dist_to_end = std::sqrt(dx * dx + dy * dy);
 
-        // Rotate the global offset into the robot's local frame
-        // Local X is "side to side", Local Y is "forward/back"
-        float localX =
-            dx * std::sin(current.heading) - dy * std::cos(current.heading);
-        float localY =
-            dx * std::cos(current.heading) + dy * std::sin(current.heading);
-
-        float L2 = dx * dx + dy * dy; // Lookahead distance squared
-        float dist = std::sqrt(L2);
-
-        // 2. Calculate Curvature (K)
-        // K = 2x / L^2. This is the inverse of the radius of the arc.
-        float curvature = (2.0f * localX) / L2;
-
-        // 3. Differential Drive Kinematics
-        // Left = V * (2 + K*W) / 2
-        // Right = V * (2 - K*W) / 2
-        float v = maxVel;
-
-        // Slow down if we are far from the target heading (High curvature)
-        if (std::abs(curvature) > 1.0f)
-            v /= std::abs(curvature);
-
-        float leftVel = v * (2.0f + curvature * trackWidth) / 2.0f;
-        float rightVel = v * (2.0f - curvature * trackWidth) / 2.0f;
-
-        // If reversing, flip the logic
-        if (target.reverse) {
-            std::swap(leftVel, rightVel);
-            leftVel *= -1;
-            rightVel *= -1;
+        if (dist_to_end < 0.1f) {
+            // If we've made it to the current point, we recurse to continue
+            // pathing
+            printf("Reached next point...\n");
+            current_point++;
+            return update(current, path, dt);
         }
 
-        return {leftVel, rightVel};
+        // --- THE REVERSE FIX ---
+        // 1. Deceive the math: If reversing, pretend the robot is facing
+        // backward
+        float effective_heading = current.heading;
+        if (target.reverse) {
+            effective_heading += M_PI;
+        }
+
+        // 2. Transform global offset into Robot-Local coordinates using the
+        // effective heading
+        float localX =
+            dx * std::sin(effective_heading) - dy * std::cos(effective_heading);
+
+        float L2 = lookaheadDist * lookaheadDist;
+        if (L2 < 0.01f)
+            L2 = 0.01f;
+        float curvature = (2.0f * localX) / L2;
+
+        // 3. Distance PID
+        float base_speed = distPID.calculate(dist_to_end, 0.0f, dt);
+
+        // If we are reversing, simply negate the base speed.
+        // The differential kinematics below will naturally handle the rest!
+        if (target.reverse) {
+            base_speed = -base_speed;
+        }
+
+        // 4. Differential Drive Kinematics
+        float left_out = base_speed * (2.0f - curvature * trackWidth) / 2.0f;
+        float right_out = base_speed * (2.0f + curvature * trackWidth) / 2.0f;
+
+        // Note: No more swapping left and right!
+
+        // Invert the left motor
+        return {-left_out, right_out, false};
     }
 };
