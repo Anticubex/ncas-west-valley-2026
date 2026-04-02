@@ -101,7 +101,7 @@ struct PathPoint {
 #include "main.h"
 class PathFollower {
   public:
-    float lookaheadDist = 0.6f; // TUNABLE: How far ahead the robot looks
+    float lookaheadDist = 0.8f; // TUNABLE: How far ahead the robot looks
     float trackWidth;
     size_t current_point;
     bool loop;
@@ -186,8 +186,8 @@ class PathFollower {
         }
 
         // 4. Differential Drive Kinematics
-        float left_out = base_speed * (2.0f - curvature * trackWidth) / 2.0f;
-        float right_out = base_speed * (2.0f + curvature * trackWidth) / 2.0f;
+        float left_out = base_speed * (2.0f + curvature * trackWidth) / 2.0f;
+        float right_out = base_speed * (2.0f - curvature * trackWidth) / 2.0f;
 
         // Note: No more swapping left and right!
 
