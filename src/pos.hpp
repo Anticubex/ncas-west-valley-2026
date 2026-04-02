@@ -103,7 +103,7 @@ struct PathPoint {
 #include "main.h"
 class PathFollower {
   public:
-    float lookaheadDist = 0.8f; // TUNABLE: How far ahead the robot looks
+    float lookaheadDist = 0.6f; // TUNABLE: How far ahead the robot looks
     float trackWidth;
     size_t current_point;
     bool loop;
@@ -136,9 +136,26 @@ class PathFollower {
             float dy = target.y - current.y;
             float dist_to_end = std::sqrt(dx * dx + dy * dy);
 
-            if (dist_to_end < 0.05f) {
+            // Figure out which way we are effectively facing
+            float effective_heading = current.heading;
+            if (target.reverse) {
+                effective_heading += M_PI;
+            }
+
+            // Project the distance onto the robot's forward vector
+            // localY > 0 means the point is in front. localY < 0 means it's
+            // behind.
+            float localY = dx * std::cos(effective_heading) +
+                           dy * std::sin(effective_heading);
+            if (target.reverse) {
+                localY *= -1.f;
+            }
+
+            if (dist_to_end < 0.05f ||
+                (localY < 0.0f && dist_to_end < lookaheadDist)) {
                 printf("Reached point %u...\n", current_point);
                 current_point++;
+                distPID.reset();
             } else {
                 break; // We found a valid target, exit the while loop
             }
@@ -185,6 +202,7 @@ class PathFollower {
         // The differential kinematics below will naturally handle the rest!
         if (target.reverse) {
             base_speed = -base_speed;
+            curvature = -curvature;
         }
 
         // 4. Differential Drive Kinematics
@@ -192,6 +210,8 @@ class PathFollower {
         float right_out = base_speed * (2.0f - curvature * trackWidth) / 2.0f;
 
         // Note: No more swapping left and right!
+        printf("K: %.2f | V: %.2f | R: %.2f, L: %.2f\t", curvature, base_speed,
+               right_out, left_out);
 
         // Invert the left motor
         return {-left_out, right_out, false};

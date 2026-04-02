@@ -1,9 +1,12 @@
 #include "main.h"
+#include "color.hpp"
 #include "pos.hpp"
 #include "pros/abstract_motor.hpp"
 #include "pros/misc.h"
 #include "pros/misc.hpp"
 #include "pros/motors.h"
+#include "pros/optical.h"
+#include "pros/optical.hpp"
 #include "pros/screen.h"
 #include "pros/screen.hpp"
 #include <cmath>
@@ -102,6 +105,17 @@ const float trackWidth = 0.43322;
 const std::uint8_t LEFT_PORT = 20;
 const std::uint8_t RIGHT_PORT = 10;
 const std::uint8_t IMU_PORT = 5;
+const std::uint8_t OPTICAL_PORT = 6;
+
+const std::vector<PathPoint> final_path = {
+    {2, 0, false},     {2.5, 0.5, false}, {2, 5, false},     {1.5, 4.5, false},
+    {1.5, 0.5, false}, {1.5, 4.5, true},  {2, 5, true},      {1.5, 5, false},
+    {1, 4.5, false},   {1, 0.5, false},   {1, 4.5, true},    {1.5, 5, true},
+    {1, 5, false},     {0.5, 4.5, false}, {0.5, 0.5, false}, {0.5, 4.5, true},
+    {1, 5, true},      {0.5, 5, false},   {0, 4.5, false},   {0, 0.5, false},
+    {0, 4.5, true},    {0.5, 5, true},    {0, 4.5, false},   {2.5, 0.5, false},
+    {2, 0, false},     {1, 0, false},
+};
 
 void do_tank_drive(pros::Motor &left_motor, pros::Motor &right_motor,
                    pros::Controller &controller) {
@@ -161,6 +175,8 @@ void opcontrol() {
     pros::IMU imu(IMU_PORT);
     pros::Motor left_motor(LEFT_PORT, pros::MotorGears::green);
     pros::Motor right_motor(RIGHT_PORT, pros::MotorGears::green);
+    pros::Optical optical_sensor(OPTICAL_PORT);
+    optical_sensor.set_led_pwm(100);
 
     left_motor.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
     right_motor.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
@@ -175,7 +191,7 @@ void opcontrol() {
 
     // --- PATH FOLLOWER SETUP ---
     // Start with a small P, 0 I, and some D to prevent overshoot.
-    static PID distancePID(50.00f, 10.0f, 1.0f);
+    static PID distancePID(50.00f, 15.0f, 10.0f);
     static PathFollower follower(trackWidth, distancePID);
 
     // Ping-Pong Paths
@@ -194,10 +210,11 @@ void opcontrol() {
                                      {0.5f, 1.f, false},
                                      {0.f, 0.5f, false}};
 
-    std::vector<PathPoint> arc_and_back = {
-        {0.5f, 0.f, false}, {1.f, .5f, false}, {0.5f, 1.f, false},
-        {0.5f, 1.f, true},  {1.f, .5f, true},  {0.5f, 0.f, true},
-    };
+    std::vector<PathPoint> arc_and_back = {{0.5f, 0.f, false},
+                                           {1.f, .5f, false},
+                                           {0.5f, 1.f, false},
+                                           {1.f, .5f, true},
+                                           {0.5f, 0.f, true}};
 
     bool going_forward = true;
     bool is_tuning_mode = false;
@@ -262,7 +279,7 @@ void opcontrol() {
 
             // --- PATH EXECUTION ---
             // auto current_path = going_forward ? forward_path : reverse_path;
-            auto current_path = arc_and_back;
+            auto current_path = circle;
             follower.loop = true;
             auto out = follower.update(position, current_path, dt);
 
@@ -288,7 +305,7 @@ void opcontrol() {
             // Print to terminal so you don't have to stare at the brain
             printf("Tuning [%s]: %.3f | X: %.2f | Y: %.2f | H: %.2f\n",
                    names[selected_idx], *params[selected_idx], position.x,
-                   position.y, position.heading);
+                   position.y, position.heading * (180.f / M_PI));
 
         } else {
             pros::screen::print(pros::E_TEXT_LARGE, 2, "MANUAL DRIVE       ");
@@ -299,6 +316,10 @@ void opcontrol() {
             do_tank_drive(left_motor, right_motor, controller);
         }
 
+        do_mineral_detection(optical_sensor);
+        printf("%.2f | %.2f | %.2f \n", optical_sensor.get_hue(),
+               optical_sensor.get_saturation(),
+               optical_sensor.get_brightness());
         pros::delay(20);
     }
 }
