@@ -66,8 +66,12 @@ void competition_initialize() {}
  * will be stopped. Re-enabling the robot will restart the task, not re-start it
  * from where it left off.
  */
-
-void autonomous() {}
+void autonomous() {
+    while (true) {
+        pros::screen::print(pros::E_TEXT_MEDIUM, 1, "Hello!");
+        pros::delay(500);
+    }
+}
 
 /**
  * Runs the operator control code. This function will be started in its own task
@@ -90,6 +94,7 @@ void autonomous() {}
  * trackwidth: 0.43322
  * */
 
+// Unit of measure is two tiles now
 const float leftRatio = -0.00043777;
 const float rightRatio = 0.00043170;
 const float trackWidth = 0.43322;
@@ -98,9 +103,22 @@ const std::uint8_t LEFT_PORT = 20;
 const std::uint8_t RIGHT_PORT = 10;
 const std::uint8_t IMU_PORT = 5;
 
+void do_tank_drive(pros::Motor &left_motor, pros::Motor &right_motor,
+                   pros::Controller &controller) {
+    float throttle =
+        (float)(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y)) /
+        127.f;
+    float rotation =
+        -(float)(controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X)) /
+        127.f;
+    float final_left = throttle - rotation;
+    float final_right = throttle + rotation;
+    left_motor.move(-(std::int32_t)(final_left * 127.f));
+    right_motor.move((std::int32_t)(final_right * 127.f));
+}
 void opcontrol() {
     // Hardware Setup
-    pros::IMU imu(IMU_PORT); // Port 5
+    pros::IMU imu(IMU_PORT);
     pros::Motor left_motor(LEFT_PORT, pros::MotorGears::green);
     pros::Motor right_motor(RIGHT_PORT, pros::MotorGears::green);
     pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -111,8 +129,8 @@ void opcontrol() {
 
     // PID Gains - TUNING STARTS HERE
     // Start with just kP, keep kI and kD at 0 until kP is stable
-    PID linPID(4.0f, 0.0f, 0.1f);
-    PID angPID(2.0f, 0.0f, 0.05f);
+    PID linPID(0.4f, 0.0f, 0.1f);
+    PID angPID(0.04f, 0.0f, 0.05f);
     int valTuning = 0;
 
     imu.reset();
@@ -123,18 +141,34 @@ void opcontrol() {
     BotValues tuning_vals(rightRatio, leftRatio, trackWidth);
     Pos position = Pos(0.f, 0.f, 0.f);
 
+    // Store the encoder values from the PREVIOUS loop
+    float last_l_deg = left_motor.get_position();
+    float last_r_deg = right_motor.get_position();
+
     float now, last;
     last = pros::millis();
 
     while (true) {
         now = pros::millis();
-        // dt is in millis
+        // dt is in seconds
         float dt = (now - last) * 0.001;
         last = now;
 
-        // Convert RPM to deg/sec
-        float l_vel = left_motor.get_actual_velocity() * 360 / 60;
-        float r_vel = right_motor.get_actual_velocity() * 360 / 60;
+        // Do NOT use Motor::get_velocity()
+        float curr_l_deg = left_motor.get_position();
+        float curr_r_deg = right_motor.get_position();
+        // 2. Calculate DELTA degrees (This is much more accurate than Velocity)
+        float d_left_deg = curr_l_deg - last_l_deg;
+        float d_right_deg = curr_r_deg - last_r_deg;
+        // Update the "last" values for the next iteration
+        last_l_deg = curr_l_deg;
+        last_r_deg = curr_r_deg;
+
+        // 3. Convert Delta Degrees to Velocity (Units: Tiles per Second)
+        // Since Vel::from_encoders expects deg/sec:
+        float l_vel = d_left_deg / dt;
+        float r_vel = d_right_deg / dt;
+
         // This assumes the rotation is in the z-axis. Change this if you
         // reorient the IMU!
         // THIS IS IN RADIANS
@@ -144,7 +178,7 @@ void opcontrol() {
         position.apply_with_imu(curr_vel, imu_heading, dt);
 
         pros::screen::print(pros::E_TEXT_MEDIUM, 1,
-                            "x: %.2f | y: %.2f | head: %2.f", position.x,
+                            "x: %.2f | y: %.2f | head: %.2f", position.x,
                             position.y, position.heading * (180.f / M_PI));
 
         if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
@@ -262,18 +296,9 @@ void opcontrol() {
             right_motor.move(std::clamp((int)(r_out * 127.f), -127, 127));
         } else {
             // Tank drive for testing
-            float throttle = (float)(controller.get_analog(
-                                 pros::E_CONTROLLER_ANALOG_LEFT_Y)) /
-                             127.f;
-            float rotation = -(float)(controller.get_analog(
-                                 pros::E_CONTROLLER_ANALOG_RIGHT_X)) /
-                             127.f;
-            float final_left = throttle - rotation;
-            float final_right = throttle + rotation;
-            left_motor.move(-(std::int32_t)(final_left * 127.f));
-            right_motor.move((std::int32_t)(final_right * 127.f));
+            do_tank_drive(left_motor, right_motor, controller);
         }
 
-        pros::delay(50);
+        pros::delay(20);
     }
 }
