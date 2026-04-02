@@ -58,8 +58,10 @@ class Pos {
         y += dLin * std::sin(avgHeading);
         heading = newHeading;
 
-        // Standard normalization
-        heading = std::atan2(std::sin(heading), std::cos(heading));
+        // DO NOT DO THIS, because it leads to the ever present "average of
+        // 179deg and -179deg is 0deg, when it's actually +-180deg" Standard
+        // normalization heading = std::atan2(std::sin(heading),
+        // std::cos(heading));
     }
 };
 
