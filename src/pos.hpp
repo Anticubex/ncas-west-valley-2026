@@ -101,7 +101,7 @@ struct PathPoint {
 #include "main.h"
 class PathFollower {
   public:
-    float lookaheadDist = 0.4f; // TUNABLE: How far ahead the robot looks
+    float lookaheadDist = 0.6f; // TUNABLE: How far ahead the robot looks
     float trackWidth;
     size_t current_point;
     bool loop;
@@ -118,14 +118,30 @@ class PathFollower {
     Output update(const Pos &current, const std::vector<PathPoint> &path,
                   float dt) {
 
-        if (current_point >= path.size()) {
-            if (loop && !path.empty()) {
-                current_point = 0;
-            } else {
+        while (true) {
+            if (current_point >= path.size()) {
                 printf("Done with path\n");
-                return {0, 0, true};
+                if (loop && !path.empty()) {
+                    printf("Looping...\n");
+                    current_point = 0;
+                } else {
+                    return {0, 0, true};
+                }
+            }
+
+            PathPoint target = path[current_point];
+            float dx = target.x - current.x;
+            float dy = target.y - current.y;
+            float dist_to_end = std::sqrt(dx * dx + dy * dy);
+
+            if (dist_to_end < 0.05f) {
+                printf("Reached point %u...\n", current_point);
+                current_point++;
+            } else {
+                break; // We found a valid target, exit the while loop
             }
         }
+
         PathPoint target = path[current_point];
         printf("Pathing to [%u] %.2f, %.2f\t", current_point, target.x,
                target.y);

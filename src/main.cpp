@@ -123,6 +123,18 @@ void update_position(pros::IMU &imu, pros::Motor &left_motor,
                      float &dt) {
     float curr_l_deg = left_motor.get_position();
     float curr_r_deg = right_motor.get_position();
+    // THIS IS IN DEGREES (must convert), AND NOW CCW POSITIVE
+    auto raw_imu = -imu.get_rotation();
+    // --- SANITIZE HARDWARE ERRORS ---
+    // Prevent PROS_ERR_F (Infinity) from poisoning the math if a wire wiggles
+    // loose
+    if (curr_l_deg == PROS_ERR_F)
+        curr_l_deg = last_l_deg;
+    if (curr_r_deg == PROS_ERR_F)
+        curr_r_deg = last_r_deg;
+    if (raw_imu == PROS_ERR_F)
+        raw_imu = position.heading * (180.f / M_PI); // Use last known heading
+
     // 2. Calculate DELTA degrees (This is much more accurate than Velocity)
     float d_left_deg = curr_l_deg - last_l_deg;
     float d_right_deg = curr_r_deg - last_r_deg;
@@ -138,7 +150,7 @@ void update_position(pros::IMU &imu, pros::Motor &left_motor,
     // This assumes the rotation is in the z-axis. Change this if you
     // reorient the IMU!
     // THIS IS IN RADIANS
-    float imu_heading = imu.get_rotation() * (M_PI / 180.f);
+    float imu_heading = raw_imu * (M_PI / 180.f);
 
     Vel curr_vel = Vel::from_encoders(tuning_vals, l_vel, r_vel);
     position.apply_with_imu(curr_vel, imu_heading, dt);
@@ -163,7 +175,7 @@ void opcontrol() {
 
     // --- PATH FOLLOWER SETUP ---
     // Start with a small P, 0 I, and some D to prevent overshoot.
-    static PID distancePID(50.00f, 1.0f, -1.0f);
+    static PID distancePID(50.00f, 10.0f, 1.0f);
     static PathFollower follower(trackWidth, distancePID);
 
     // Ping-Pong Paths
@@ -172,10 +184,20 @@ void opcontrol() {
     std::vector<PathPoint> reverse_path = {
         {0.0f, 0.0f, true}}; // 0 tiles (return to start), reverse
 
-    std::vector<PathPoint> circle = {{1.f, 0.f, false},
-                                     {1.f, 1.f, false},
-                                     {0.f, 1.f, false},
-                                     {0.f, 0.f, false}};
+    std::vector<PathPoint> rectangle = {{1.f, 0.f, false},
+                                        {1.f, 1.f, false},
+                                        {0.f, 1.f, false},
+                                        {0.f, 0.f, false}};
+
+    std::vector<PathPoint> circle = {{0.5f, 0.f, false},
+                                     {1.f, .5f, false},
+                                     {0.5f, 1.f, false},
+                                     {0.f, 0.5f, false}};
+
+    std::vector<PathPoint> arc_and_back = {
+        {0.5f, 0.f, false}, {1.f, .5f, false}, {0.5f, 1.f, false},
+        {0.5f, 1.f, true},  {1.f, .5f, true},  {0.5f, 0.f, true},
+    };
 
     bool going_forward = true;
     bool is_tuning_mode = false;
