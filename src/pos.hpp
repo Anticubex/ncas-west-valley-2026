@@ -1,6 +1,7 @@
 // pos.hpp
 
 #pragma once
+#include "pros/screen.h"
 #include <cmath>
 #include <vector>
 
@@ -164,6 +165,12 @@ class PathFollower {
         PathPoint target = path[current_point];
         printf("Pathing to [%u] %.2f, %.2f\t", current_point, target.x,
                target.y);
+        pros::screen::print(pros::E_TEXT_MEDIUM, 2,
+                            "Pathing to [%u] %.2f, %.2f", current_point,
+                            target.x, target.y);
+        pros::screen::print(pros::E_TEXT_MEDIUM, 3,
+                            "x: %.2f | y: %.2f | head: %.2f", current.x,
+                            current.y, current.heading * (180.f / M_PI));
 
         float dx = target.x - current.x;
         float dy = target.y - current.y;
@@ -174,6 +181,7 @@ class PathFollower {
             // pathing
             printf("Reached next point...\n");
             current_point++;
+            distPID.reset();
             return update(current, path, dt);
         }
 
@@ -205,6 +213,7 @@ class PathFollower {
             curvature = -curvature;
         }
 
+        base_speed *= 0.1;
         // 4. Differential Drive Kinematics
         float left_out = base_speed * (2.0f + curvature * trackWidth) / 2.0f;
         float right_out = base_speed * (2.0f - curvature * trackWidth) / 2.0f;

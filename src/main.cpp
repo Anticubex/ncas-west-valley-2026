@@ -107,14 +107,38 @@ const std::uint8_t RIGHT_PORT = 10;
 const std::uint8_t IMU_PORT = 5;
 const std::uint8_t OPTICAL_PORT = 6;
 
+// const std::vector<PathPoint> final_path = {
+// 	{2, -0, false},
+// 	{2.5, -0.5, false},
+// 	{2, -5, false},
+// 	{1.5, -4.5, false},
+// 	{1.5, -0.5, false},
+// 	{1.5, -4.5, true},
+// 	{2, -5, true},
+// 	{1.5, -5, false},
+// 	{1, -4.5, false},
+// 	{1, -0.5, false},
+// 	{1, -4.5, true},
+// 	{1.5, -5, true},
+// 	{1, -5, false},
+// 	{0.5, -4.5, false},
+// 	{0.5, -0.5, false},
+// 	{0.5, -4.5, true},
+// 	{1, -5, true},
+// 	{0.5, -5, false},
+// 	{0, -4.5, false},
+// 	{0, -0.5, false},
+// 	{0, -4.5, true},
+// 	{0.5, -5, true},
+// 	{0, -4.5, false},
+// 	{2.5, -0.5, false},
+// 	{2, -0, false},
+// 	{1, -0, false}};
+
 const std::vector<PathPoint> final_path = {
-    {2, 0, false},     {2.5, 0.5, false}, {2, 5, false},     {1.5, 4.5, false},
-    {1.5, 0.5, false}, {1.5, 4.5, true},  {2, 5, true},      {1.5, 5, false},
-    {1, 4.5, false},   {1, 0.5, false},   {1, 4.5, true},    {1.5, 5, true},
-    {1, 5, false},     {0.5, 4.5, false}, {0.5, 0.5, false}, {0.5, 4.5, true},
-    {1, 5, true},      {0.5, 5, false},   {0, 4.5, false},   {0, 0.5, false},
-    {0, 4.5, true},    {0.5, 5, true},    {0, 4.5, false},   {2.5, 0.5, false},
-    {2, 0, false},     {1, 0, false},
+    {2, 0, false},
+    {2.5, -0.5, false},
+    {2, -5, false},
 };
 
 void do_tank_drive(pros::Motor &left_motor, pros::Motor &right_motor,
@@ -191,7 +215,7 @@ void opcontrol() {
 
     // --- PATH FOLLOWER SETUP ---
     // Start with a small P, 0 I, and some D to prevent overshoot.
-    static PID distancePID(50.00f, 15.0f, 10.0f);
+    static PID distancePID(50.00f, 5.0f, 5.0f);
     static PathFollower follower(trackWidth, distancePID);
 
     // Ping-Pong Paths
@@ -217,7 +241,7 @@ void opcontrol() {
                                            {0.5f, 0.f, true}};
 
     bool going_forward = true;
-    bool is_tuning_mode = false;
+    bool autonmode = true;
 
     // --- LIVE TUNING UI SETUP ---
     int selected_idx = 0;
@@ -254,13 +278,13 @@ void opcontrol() {
 
         // Toggle Tuning Mode with 'A'
         if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) {
-            is_tuning_mode = !is_tuning_mode;
+            autonmode = !autonmode;
             distancePID.reset();
             left_motor.move(0);
             right_motor.move(0);
         }
 
-        if (is_tuning_mode) {
+        if (autonmode) {
             // --- UI LOGIC ---
             if (controller.get_digital_new_press(
                     pros::E_CONTROLLER_DIGITAL_RIGHT))
@@ -318,14 +342,14 @@ void opcontrol() {
             do_tank_drive(left_motor, right_motor, controller);
         }
 
-        do_mineral_detection(optical_sensor);
-        printf("%.2f | %.2f | %.2f \n", optical_sensor.get_hue(),
-               optical_sensor.get_saturation(),
-               optical_sensor.get_brightness());
-        pros::screen::print(pros::E_TEXT_LARGE, 2, "%.2f | %.2f | %.2f \n",
-                            optical_sensor.get_hue(),
-                            optical_sensor.get_saturation(),
-                            optical_sensor.get_brightness());
+        // do_mineral_detection(optical_sensor);
+        // printf("%.2f | %.2f | %.2f \n", optical_sensor.get_hue(),
+        //        optical_sensor.get_saturation(),
+        //        optical_sensor.get_brightness());
+        // pros::screen::print(
+        //     pros::E_TEXT_MEDIUM, 1, " h %.2f | s %.2f | v %.2f \n",
+        //     optical_sensor.get_hue(), optical_sensor.get_saturation(),
+        //     optical_sensor.get_brightness());
 
         pros::delay(10);
     }
