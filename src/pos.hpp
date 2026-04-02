@@ -63,46 +63,6 @@ class Pos {
     }
 };
 
-/**
- * Pathing Logic: Generates targets for a Tank Drive controller.
- */
-class PathLogic {
-  public:
-    struct Target {
-        float linearVel;
-        float angularVel;
-    };
-
-    /**
-     * Calculates required velocities to reach a point.
-     * This is a simplified "Point-to-Point" generator.
-     */
-    static Target step_towards(const Pos &current, float targetX, float targetY,
-                               float maxLin, float maxAng) {
-        float dx = targetX - current.x;
-        float dy = targetY - current.y;
-        float distance = std::sqrt(dx * dx + dy * dy);
-
-        // The angle the robot needs to be at to face the point
-        float targetAngle = std::atan2(dy, dx);
-
-        // The difference between where we are and where we want to look
-        float angleError = targetAngle - current.heading;
-        angleError = std::atan2(std::sin(angleError), std::cos(angleError));
-
-        // Simple P-loop logic (You would eventually add PID here)
-        float linVel =
-            distance > 1.0f ? maxLin : 0; // Move if further than 1 unit
-        float angVel = angleError * 2.0f; // Scale turn speed by error
-
-        // Clamp to max values
-        if (std::abs(angVel) > maxAng)
-            angVel = (angVel > 0 ? 1 : -1) * maxAng;
-
-        return {linVel, angVel};
-    }
-};
-
 class PID {
   public:
     float kp, ki, kd;
@@ -128,4 +88,63 @@ class PID {
     }
 
     void reset() { error = lastError = integral = derivative = 0; }
+};
+
+struct PathPoint {
+    float x, y, heading;
+    bool reverse; // If true, the robot drives butt-first to this point
+};
+class PathFollower {
+  private:
+    float lookaheadDist = 0.4f; // How far ahead to look (meters)
+    float trackWidth;
+    PID &velPID; // Now we use PID to control actual velocity, not just voltage
+
+  public:
+    PathFollower(float tw, PID &v) : trackWidth(tw), velPID(v) {}
+
+    struct DriveVel {
+        float left, right;
+    };
+
+    DriveVel update(const Pos &current, const PathPoint &target, float maxVel) {
+        // 1. Transform target to Robot-Local Coordinates
+        float dx = target.x - current.x;
+        float dy = target.y - current.y;
+
+        // Rotate the global offset into the robot's local frame
+        // Local X is "side to side", Local Y is "forward/back"
+        float localX =
+            dx * std::sin(current.heading) - dy * std::cos(current.heading);
+        float localY =
+            dx * std::cos(current.heading) + dy * std::sin(current.heading);
+
+        float L2 = dx * dx + dy * dy; // Lookahead distance squared
+        float dist = std::sqrt(L2);
+
+        // 2. Calculate Curvature (K)
+        // K = 2x / L^2. This is the inverse of the radius of the arc.
+        float curvature = (2.0f * localX) / L2;
+
+        // 3. Differential Drive Kinematics
+        // Left = V * (2 + K*W) / 2
+        // Right = V * (2 - K*W) / 2
+        float v = maxVel;
+
+        // Slow down if we are far from the target heading (High curvature)
+        if (std::abs(curvature) > 1.0f)
+            v /= std::abs(curvature);
+
+        float leftVel = v * (2.0f + curvature * trackWidth) / 2.0f;
+        float rightVel = v * (2.0f - curvature * trackWidth) / 2.0f;
+
+        // If reversing, flip the logic
+        if (target.reverse) {
+            std::swap(leftVel, rightVel);
+            leftVel *= -1;
+            rightVel *= -1;
+        }
+
+        return {leftVel, rightVel};
+    }
 };
