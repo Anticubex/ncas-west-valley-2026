@@ -262,7 +262,7 @@ void opcontrol() {
 
             // --- PATH EXECUTION ---
             // auto current_path = going_forward ? forward_path : reverse_path;
-            auto current_path = circle;
+            auto current_path = arc_and_back;
             follower.loop = true;
             auto out = follower.update(position, current_path, dt);
 
