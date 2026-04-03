@@ -98,8 +98,8 @@ void autonomous() {
  * */
 
 // Unit of measure is two tiles now
-const float leftRatio = -0.00043777;
-const float rightRatio = 0.00043170;
+const float leftRatio = -0.00053777;
+const float rightRatio = 0.00053170;
 const float trackWidth = 0.43322;
 
 const std::uint8_t LEFT_PORT = 20;
@@ -107,39 +107,21 @@ const std::uint8_t RIGHT_PORT = 10;
 const std::uint8_t IMU_PORT = 5;
 const std::uint8_t OPTICAL_PORT = 6;
 
-// const std::vector<PathPoint> final_path = {
-// 	{2, -0, false},
-// 	{2.5, -0.5, false},
-// 	{2, -5, false},
-// 	{1.5, -4.5, false},
-// 	{1.5, -0.5, false},
-// 	{1.5, -4.5, true},
-// 	{2, -5, true},
-// 	{1.5, -5, false},
-// 	{1, -4.5, false},
-// 	{1, -0.5, false},
-// 	{1, -4.5, true},
-// 	{1.5, -5, true},
-// 	{1, -5, false},
-// 	{0.5, -4.5, false},
-// 	{0.5, -0.5, false},
-// 	{0.5, -4.5, true},
-// 	{1, -5, true},
-// 	{0.5, -5, false},
-// 	{0, -4.5, false},
-// 	{0, -0.5, false},
-// 	{0, -4.5, true},
-// 	{0.5, -5, true},
-// 	{0, -4.5, false},
-// 	{2.5, -0.5, false},
-// 	{2, -0, false},
-// 	{1, -0, false}};
-
 const std::vector<PathPoint> final_path = {
-    {2, 0, false},
-    {2.5, -0.5, false},
-    {2, -5, false},
-};
+    {2, -0, false},     {2.5, -0.5, false}, {2, -6, false},
+    {1.5, -4.5, false}, {1.5, -0.5, false}, {1.5, -4.5, true},
+    {2, -6, true},      {1.5, -6, false},   {1, -4.5, false},
+    {1, -0.5, false},   {1, -4.5, true},    {1.5, -6, true},
+    {1, -6, false},     {0.5, -4.5, false}, {0.5, -0.5, false},
+    {0.5, -4.5, true},  {1, -6, true},      {0.5, -6, false},
+    {0, -4.5, false},   {0, -0.5, false},   {0, -4.5, true},
+    {0.5, -6, true},    {0, -4.5, false},   {2.5, -0.5, false},
+    {2, -0, false},     {1, -0, false}};
+// const std::vector<PathPoint> final_path = {
+//     {2, 0, false},
+//     {2.5, -0.5, false},
+//     {2, -5, false},
+// };
 
 void do_tank_drive(pros::Motor &left_motor, pros::Motor &right_motor,
                    pros::Controller &controller) {
@@ -215,7 +197,7 @@ void opcontrol() {
 
     // --- PATH FOLLOWER SETUP ---
     // Start with a small P, 0 I, and some D to prevent overshoot.
-    static PID distancePID(50.00f, 5.0f, 5.0f);
+    static PID distancePID(40.00f, 0.0f, 2.5f);
     static PathFollower follower(trackWidth, distancePID);
 
     // Ping-Pong Paths
@@ -263,7 +245,18 @@ void opcontrol() {
     float last_r_deg = right_motor.get_position();
     float last = pros::millis();
 
-    while (true) {
+    bool enableOp = true;
+    while (enableOp) {
+
+        do_mineral_detection(optical_sensor);
+        printf("%.2f | %.2f | %.2f \n", optical_sensor.get_hue(),
+               optical_sensor.get_saturation(),
+               optical_sensor.get_brightness());
+        pros::screen::print(
+            pros::E_TEXT_MEDIUM, 1, " h %.2f | s %.2f | v %.2f \n",
+            optical_sensor.get_hue(), optical_sensor.get_saturation(),
+            optical_sensor.get_brightness());
+
         float now = pros::millis();
         float dt = (now - last) * 0.001f;
         // Avoid dividing by zero on the very first loop
@@ -308,7 +301,7 @@ void opcontrol() {
             auto out = follower.update(position, current_path, dt);
 
             if (out.done) {
-                return;
+                enableOp = false;
                 // We arrived! Swap directions and reset PID for the next trip
                 going_forward = !going_forward;
                 distancePID.reset();
@@ -341,15 +334,6 @@ void opcontrol() {
             //                     M_PI));
             do_tank_drive(left_motor, right_motor, controller);
         }
-
-        // do_mineral_detection(optical_sensor);
-        // printf("%.2f | %.2f | %.2f \n", optical_sensor.get_hue(),
-        //        optical_sensor.get_saturation(),
-        //        optical_sensor.get_brightness());
-        // pros::screen::print(
-        //     pros::E_TEXT_MEDIUM, 1, " h %.2f | s %.2f | v %.2f \n",
-        //     optical_sensor.get_hue(), optical_sensor.get_saturation(),
-        //     optical_sensor.get_brightness());
 
         pros::delay(10);
     }

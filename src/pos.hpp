@@ -81,6 +81,8 @@ class PID {
         error = target - current;
         integral += error * dt;
         derivative = (error - lastError) / dt;
+        if (derivative > 0.f)
+            derivative = 0.f;
         lastError = error;
 
         // Simple integral anti-windup: cap the integral contribution
@@ -104,7 +106,7 @@ struct PathPoint {
 #include "main.h"
 class PathFollower {
   public:
-    float lookaheadDist = 0.6f; // TUNABLE: How far ahead the robot looks
+    float lookaheadDist = 0.5f; // TUNABLE: How far ahead the robot looks
     float trackWidth;
     size_t current_point;
     bool loop;
@@ -121,13 +123,14 @@ class PathFollower {
     Output update(const Pos &current, const std::vector<PathPoint> &path,
                   float dt) {
 
+        // 1. SAFE POINT ADVANCEMENT
         while (true) {
             if (current_point >= path.size()) {
-                printf("Done with path\n");
                 if (loop && !path.empty()) {
                     printf("Looping...\n");
                     current_point = 0;
                 } else {
+                    printf("Done with path\n");
                     return {0, 0, true};
                 }
             }
@@ -137,36 +140,38 @@ class PathFollower {
             float dy = target.y - current.y;
             float dist_to_end = std::sqrt(dx * dx + dy * dy);
 
-            // Figure out which way we are effectively facing
             float effective_heading = current.heading;
             if (target.reverse) {
                 effective_heading += M_PI;
             }
 
-            // Project the distance onto the robot's forward vector
-            // localY > 0 means the point is in front. localY < 0 means it's
-            // behind.
             float localY = dx * std::cos(effective_heading) +
                            dy * std::sin(effective_heading);
             if (target.reverse) {
                 localY *= -1.f;
             }
 
-            if (dist_to_end < 0.05f ||
+            // Trigger if we are close, OR if we grazed past it
+            if (dist_to_end < 0.2f ||
                 (localY < 0.0f && dist_to_end < lookaheadDist)) {
-                printf("Reached point %u...\n", current_point);
+                printf("Reached point %zu...\n", current_point);
                 current_point++;
-                distPID.reset();
+
+                distPID.reset(); // CRITICAL: Prevents the derivative kick!
             } else {
-                break; // We found a valid target, exit the while loop
+                break;
             }
         }
 
+        // Safety return in case the loop above just finished the path
+        if (current_point >= path.size()) {
+            return {0, 0, true};
+        }
+
+        // 2. PURE PURSUIT MATH
         PathPoint target = path[current_point];
-        printf("Pathing to [%u] %.2f, %.2f\t", current_point, target.x,
-               target.y);
         pros::screen::print(pros::E_TEXT_MEDIUM, 2,
-                            "Pathing to [%u] %.2f, %.2f", current_point,
+                            "Pathing to [%zu] %.2f, %.2f", current_point,
                             target.x, target.y);
         pros::screen::print(pros::E_TEXT_MEDIUM, 3,
                             "x: %.2f | y: %.2f | head: %.2f", current.x,
@@ -176,25 +181,11 @@ class PathFollower {
         float dy = target.y - current.y;
         float dist_to_end = std::sqrt(dx * dx + dy * dy);
 
-        if (dist_to_end < 0.1f) {
-            // If we've made it to the current point, we recurse to continue
-            // pathing
-            printf("Reached next point...\n");
-            current_point++;
-            distPID.reset();
-            return update(current, path, dt);
-        }
-
-        // --- THE REVERSE FIX ---
-        // 1. Deceive the math: If reversing, pretend the robot is facing
-        // backward
         float effective_heading = current.heading;
         if (target.reverse) {
             effective_heading += M_PI;
         }
 
-        // 2. Transform global offset into Robot-Local coordinates using the
-        // effective heading
         float localX =
             dx * std::sin(effective_heading) - dy * std::cos(effective_heading);
 
@@ -203,26 +194,38 @@ class PathFollower {
             L2 = 0.01f;
         float curvature = (2.0f * localX) / L2;
 
-        // 3. Distance PID
-        float base_speed = distPID.calculate(dist_to_end, 0.0f, dt);
+        // 3. CRUISE CONTROL PID
+        float base_speed = 0.0f;
 
-        // If we are reversing, simply negate the base speed.
-        // The differential kinematics below will naturally handle the rest!
+        if (!loop && current_point == path.size() - 1) {
+            // We are on the final point. Calculate speed normally to decelerate
+            // to a stop.
+            base_speed = distPID.calculate(dist_to_end, 0.0f, dt) * 1.2;
+        } else {
+            // Intermediate point! Feed the PID a constant 1-tile error to
+            // maintain a steady cruising speed.
+            base_speed = distPID.calculate(1.0f, 0.0f, dt);
+
+            // Automatically slow down if the corner is extremely sharp
+            if (std::abs(curvature) > 1.5f) {
+                base_speed *= 0.6f;
+            }
+        }
+
+        // 4. REVERSE AND DIFFERENTIAL KINEMATICS
         if (target.reverse) {
             base_speed = -base_speed;
             curvature = -curvature;
         }
 
-        base_speed *= 0.1;
-        // 4. Differential Drive Kinematics
+        // base_speed *= 0.1;
+        curvature *= 0.8;
+        // You can remove your manual `base_speed *= 0.1;` test line once this
+        // is implemented!
         float left_out = base_speed * (2.0f + curvature * trackWidth) / 2.0f;
         float right_out = base_speed * (2.0f - curvature * trackWidth) / 2.0f;
 
-        // Note: No more swapping left and right!
-        printf("K: %.2f | V: %.2f | R: %.2f, L: %.2f\t", curvature, base_speed,
-               right_out, left_out);
-
-        // Invert the left motor
+        // Invert the left motor for your specific hardware setup
         return {-left_out, right_out, false};
     }
 };
